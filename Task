@@ -1,0 +1,146 @@
+-- Initializing global variables to store the latest game state.
+LatestGameState = LatestGameState or nil
+InAction = InAction or false -- Prevents the agent from taking multiple actions at once.
+
+-- Checks if two points are within a given range.
+-- @param x1, y1: Coordinates of the first point.
+-- @param x2, y2: Coordinates of the second point.
+-- @param range: The maximum allowed distance between the points.
+-- @return: Boolean indicating if the points are within the specified range.
+function inRange(x1, y1, x2, y2, range)
+    return math.sqrt((x1 - x2)^2 + (y1 - y2)^2) <= range
+end
+
+-- Decides the next action based on player proximity, energy, and health.
+-- If a player is within range and has low health, it initiates an attack; otherwise, moves strategically.
+function decideNextAction()
+    local player = LatestGameState.Players[ao.id]
+    local targetInRange = false
+    local lowestHealth = math.huge
+    local weakestPlayer = nil
+
+    -- Find the weakest player within range
+    for target, state in pairs(LatestGameState.Players) do
+        if target ~= ao.id and inRange(player.x, player.y, state.x, state.y, 2) then
+            targetInRange = true
+            if state.health < lowestHealth then
+                lowestHealth = state.health
+                weakestPlayer = target
+            end
+        end
+    end
+
+    -- If a weak player is within range and the bot has enough energy, attack them
+    if player.energy > 10 and targetInRange and weakestPlayer and lowestHealth < player.health * 0.8 then
+        ao.send({Target = Game, Action = "PlayerAttack", Player = ao.id, AttackEnergy = tostring(player.energy), Target = weakestPlayer})
+    else
+        -- Move towards the weakest player if they are not within range
+        if weakestPlayer then
+            local direction = getDirectionTowards(player.x, player.y, LatestGameState.Players[weakestPlayer].x, LatestGameState.Players[weakestPlayer].y)
+            ao.send({Target = Game, Action = "PlayerMove", Player = ao.id, Direction = direction})
+        else
+            -- If all players have high health, move randomly while avoiding walls
+            local validDirections = {}
+            for _, direction in ipairs({"Up", "Down", "Left", "Right", "UpRight", "UpLeft", "DownRight", "DownLeft"}) do
+                local newX, newY = getNewCoordinates(player.x, player.y, direction)
+                if isValidMove(newX, newY) then
+                    table.insert(validDirections, direction)
+                end
+            end
+            if #validDirections > 0 then
+                local randomIndex = math.random(#validDirections)
+                ao.send({Target = Game, Action = "PlayerMove", Player = ao.id, Direction = validDirections[randomIndex]})
+            end
+        end
+    end
+end
+
+-- Helper function to get the new coordinates after moving in a given direction
+function getNewCoordinates(x, y, direction)
+    local newX, newY = x, y
+    if direction == "Up" then
+        newY = y - 1
+    elseif direction == "Down" then
+        newY = y + 1
+    elseif direction == "Left" then
+        newX = x - 1
+    elseif direction == "Right" then
+        newX = x + 1
+    elseif direction == "UpRight" then
+        newX, newY = x + 1, y - 1
+    elseif direction == "UpLeft" then
+        newX, newY = x - 1, y - 1
+    elseif direction == "DownRight" then
+        newX, newY = x + 1, y + 1
+    elseif direction == "DownLeft" then
+        newX, newY = x - 1, y + 1
+    end
+    return newX, newY
+end
+
+-- Helper function to check if a move is valid (within the game boundaries)
+function isValidMove(x, y)
+    -- Assuming the game boundaries are [0, 0] to [10, 10]
+    return x >= 0 and x <= 10 and y >= 0 and y <= 10
+end
+
+-- Handler to update the game state upon receiving game state information.
+Handlers.add(
+    "UpdateGameState",
+    Handlers.utils.hasMatchingTag("Action", "GameState"),
+    function (msg)
+        local json = require("json")
+        LatestGameState = json.decode(msg.Data)
+        decideNextAction()
+    end
+)
+
+-- Handler to trigger game state updates.
+Handlers.add(
+    "GetGameStateOnTick",
+    Handlers.utils.hasMatchingTag("Action", "Tick"),
+    function ()
+        ao.send({Target = Game, Action = "GetGameState"})
+    end
+)
+
+-- Handler to decide the next best action.
+Handlers.add(
+    "decideNextAction",
+    Handlers.utils.hasMatchingTag("Action", "UpdatedGameState"),
+    function ()
+        if LatestGameState.GameMode ~= "Playing" then
+            InAction = false -- InAction logic added
+            return
+        end
+        print("Deciding next action.")
+        decideNextAction()
+        ao.send({Target = ao.id, Action = "Tick"})
+    end
+)
+
+-- Handler to automatically attack when hit by another player.
+Handlers.add(
+    "ReturnAttack",
+    Handlers.utils.hasMatchingTag("Action", "Hit"),
+    function (msg)
+        if not InAction then -- InAction logic added
+            InAction = true -- InAction logic added
+            local playerEnergy = LatestGameState.Players[ao.id].energy
+            if playerEnergy == undefined then
+                print(colors.red .. "Unable to read energy." .. colors.reset)
+                ao.send({Target = Game, Action = "Attack-Failed", Reason = "Unable to read energy."})
+            elseif playerEnergy == 0 then
+                print(colors.red .. "Player has insufficient energy." .. colors.reset)
+                ao.send({Target = Game, Action = "Attack-Failed", Reason = "Player has no energy."})
+            else
+                print(colors.red .. "Returning attack." .. colors.reset)
+                ao.send({Target = Game, Action = "PlayerAttack", Player = ao.id, AttackEnergy = tostring(playerEnergy)})
+            end
+            InAction = false -- InAction logic added
+            ao.send({Target = ao.id, Action = "Tick"})
+        else
+            print("Previous action still in progress. Skipping.")
+        end
+    end
+)
