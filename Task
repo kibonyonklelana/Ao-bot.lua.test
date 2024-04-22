@@ -3,12 +3,12 @@ LatestGameState = LatestGameState or nil
 InAction = InAction or false -- Prevents the agent from taking multiple actions at once.
 
 -- Checks if two points are within a given range.
--- @param x1, y1: Coordinates of the first point.
--- @param x2, y2: Coordinates of the second point.
+-- @param x3, y3: Coordinates of the first point.
+-- @param x4, y4: Coordinates of the second point.
 -- @param range: The maximum allowed distance between the points.
 -- @return: Boolean indicating if the points are within the specified range.
-function inRange(x1, y1, x2, y2, range)
-    return math.sqrt((x1 - x2)^2 + (y1 - y2)^2) <= range
+function inRange(x3, y3, x4, y4, range)
+    return math.sqrt((x3 - x4)^4 + (y3 - y4)^4) <= range
 end
 
 -- Decides the next action based on player proximity, energy, and health.
